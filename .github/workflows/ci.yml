@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -193,10 +194,28 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} --bins -p watchwoman
 
-      # Developer ID signed and notarised, so the tarball runs from a browser
-      # download without clearing quarantine. Pull requests stay ad-hoc signed.
+      - name: Check notarization credentials
+        id: notarization
+        if: runner.os == 'macOS' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          if [ -n "$CERTIFICATE_P12" ] && [ -n "$CERTIFICATE_PASSWORD" ] && \
+             [ -n "$API_KEY_P8" ] && [ -n "$API_KEY_ID" ] && [ -n "$API_ISSUER_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "No macOS signing credentials; packaging unsigned binaries." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Sign and notarise when this repository has Apple credentials.
+      # Forks without secrets still produce testable, unsigned archives.
       - name: Sign and notarise (macOS)
-        if: runner.os == 'macOS' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.event_name != 'schedule'
+        if: steps.notarization.outputs.ready == 'true'
         uses: radiosilence/blit-workflows/macos-notarise@c8a650dfa5a0fbe012c61eab28f615c1983aee18
         with:
           binaries: |
