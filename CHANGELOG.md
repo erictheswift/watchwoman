@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Automatic `jj` event indexing for worktrees containing `.jj`. Watchwoman
+  skips the cold file crawl, reads nested `.gitignore` files on demand, and
+  collapses changes inside ignored directories into a signal that makes
+  `jj` revisit tracked files there. No repository-specific
+  `.watchmanconfig` is required.
+- General Watchman clients sharing a `jj` worktree promote the root to a
+  full index when they need a complete file listing. `status` reports
+  which mode each root uses.
+
+### Fixed
+
+- Event loss and `.gitignore` changes force a fresh `jj` scan; deletions
+  of files absent from the event index remain visible to `since` queries.
+  The event index is bounded by entry count and arena size.
+- `trigger-del` now returns a Boolean `deleted` field, as the Watchman
+  client used by `jj` requires.
+
 ## [0.8.0] - 2026-10-10
 
 ### Fixed
