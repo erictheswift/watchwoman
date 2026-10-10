@@ -2,8 +2,14 @@
 
 A drop-in, wire-compatible replacement for Facebook watchman. Install
 once and everything that speaks watchman — Jest, Metro, Sapling,
-Mercurial fsmonitor, git fsmonitor, Buck2, your shell scripts — keeps
-working, minus the RAM bloat and log spam.
+Mercurial fsmonitor, git fsmonitor, Buck2, your shell scripts, and
+[Jujutsu](https://jj-vcs.github.io/jj/) — keeps working, minus the RAM
+bloat and log spam. Written in Rust, with a specialized event-index
+mode for `jj` that does not crawl or retain the whole worktree.
+
+Meta built Watchman to observe the worktree. We took the observer
+effect personally: if observing your files becomes the largest
+workload, the experiment has gone wrong.
 
 ```sh
 brew install radiosilence/watchwoman/watchwoman
@@ -13,26 +19,55 @@ brew install radiosilence/watchwoman/watchwoman
 
 ### Jujutsu worktrees need no `.watchmanconfig`
 
-When a watched root contains `.jj`, watchwoman starts with a small event
-index instead of crawling the working tree. Stock `jj` continues to use
-its Watchman fsmonitor backend; no `jj` patch or per-repository
-`ignore_dirs` list is needed. Watchwoman discovers nested `.gitignore`
-files along changed paths. Changes inside an ignored directory become
-one directory-rescan signal, so `jj` can check tracked files there using
-its own working-copy state and sparse rules. Editing a `.gitignore`,
-losing filesystem events, or exhausting the bounded event index tells
-`jj` to do a fresh scan.
+When a watched root contains `.jj`, watchwoman enters `jj-events` mode.
+Stock `jj` uses its Watchman fsmonitor backend unchanged. You do not
+need a per-repository `.watchmanconfig`, a manually maintained
+`ignore_dirs` list, or a patched `jj` binary. The repository's root and
+nested `.gitignore` files tell watchwoman which directory events it can
+collapse.
 
-If another Watchman client asks for a general query or installs a
-subscription or trigger in the same root, watchwoman builds the full
-index for that root and keeps using it for all clients. `watchwoman
-status` shows `jj-events` or `full` for each root. Filesystem events
-still come from the recursive OS watch; the smaller scope refers to
-watchwoman's in-memory index and the paths passed to `jj`.
+The first watch registers one recursive operating-system watcher and
+returns without walking the tree. Subsequent filesystem events add
+changed paths to a bounded index. When `jj` queries its Watchman clock,
+watchwoman sends those paths back; `jj` checks them against its own
+tracked-file state, ignore rules, and sparse rules.
+
+Watchwoman reads nested `.gitignore` files only along paths that receive
+events. Many changes inside an ignored directory collapse to a single
+directory-rescan signal. `jj` then checks that directory itself, so a
+tracked file inside an otherwise ignored directory is not lost. Editing
+any `.gitignore`, losing filesystem events, or filling the event index
+invalidates the clock and asks `jj` for a fresh scan. The index holds at
+most 65,536 entries or 64 MiB of path data.
+
+This reduces watchwoman's **in-memory index**, not the operating
+system's recursive watch. A general Watchman query, subscription, or
+trigger on the same root promotes it to the full file index.
+`watchwoman status` shows each root's `jj-events` or `full` mode.
+
+#### Observed on a large Jujutsu worktree
+
+These are local observations on an Apple Silicon Mac, not a controlled
+cross-machine benchmark. The first `jj status` in the same
+`frontend-orange` worktree took 5.95 s with the earlier full-index
+setup and 0.25 s after restarting watchwoman 0.9.0 in `jj-events`
+mode. On that 0.9.0 restart, the first statuses in three worktrees took
+0.16–0.31 s, and `watchwoman status` reported three watched roots, zero
+indexed files, and 11 MB footprint. An earlier 0.8.0 snapshot with one
+large root reported 241,507 indexed paths (89,956 tombstones) and
+204 MB footprint. The snapshots have different root counts and daemon
+uptimes, so they show the index change rather than an apples-to-apples
+memory speedup.
+
+For a quick check, run `watchwoman status` after `jj status`: the root
+should say `jj-events`. If it says `full`, another client requested a
+complete file view. If `jj status` misses a changed tracked file, or a
+change to `.gitignore` leaves stale results, that is a correctness bug;
+please report the affected path and the two command outputs.
 
 | Pain                               | watchman                                                                                             | watchwoman                                                                                                 |
 |------------------------------------|------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|
-| **Memory**                         | Append-only cache grows unbounded — routinely 1–3 GB after a workday on active repos.                | One `BTreeMap<PathBuf, FileEntry>` per root, bounded by live file count. No historical ballast.            |
+| **Memory**                         | Append-only cache grows unbounded — routinely 1–3 GB after a workday on active repos.                | An arena-backed file index for general clients; a bounded path-event index for `jj`.                        |
 | **Startup / recrawls**             | Synchronous full crawl on start and on every "recrawl" trigger. Multi-minute on monorepos.           | Inline initial scan with a manual directory walker; FSEvents recursive mode on macOS; 5 ms event batching.  |
 | **`fs.inotify.max_user_watches`**  | Hits the Linux 8192-inode default on modest repos, then burns CPU re-scanning.                       | One registration per root. Irrelevant what the sysctl says.                                                 |
 | **Log noise**                      | `RecrawlWarning`, `No watching anymore`, `root dir disappeared` — shouted into every CI log at INFO. | WARN default. Nothing logged unless the kernel actually reported a problem. `RUST_LOG=debug` when needed.  |
