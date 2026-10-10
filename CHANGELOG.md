@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-10
+
 ### Added
 
 - Automatic `jj` event indexing for worktrees containing `.jj`. Watchwoman
