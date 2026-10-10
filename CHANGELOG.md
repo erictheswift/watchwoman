@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-10
+
+### Fixed
+
+- CLI output now honors BSER v1 and v2 encoding, including jj's
+  `--output-encoding=bser-v2` socket discovery request.
+- Trigger commands are waited on asynchronously, so completed children
+  are reaped and repeated filesystem changes cannot accumulate zombie
+  processes.
+- `ignore_vcs` from `.watchmanconfig` now controls shallow VCS directory
+  scanning. The configured list applies to initial scans, recrawls and
+  filesystem events; `.git`, `.hg` and `.svn` remain the default when
+  the option is absent.
+
 ## [0.7.1] - 2026-09-29
 
 ### Changed
