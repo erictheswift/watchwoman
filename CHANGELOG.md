@@ -25,6 +25,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   The event index is bounded by entry count and arena size.
 - `trigger-del` now returns a Boolean `deleted` field, as the Watchman
   client used by `jj` requires.
+- Linux inotify access events no longer reset the `jj` event index when
+  watchwoman reads a `.gitignore` file.
 
 ## [0.8.0] - 2026-10-10
 
